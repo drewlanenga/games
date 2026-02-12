@@ -1,0 +1,23 @@
+{
+  "name": "village-raiders",
+  "version": "1.0.0",
+  "description": "Village Raiders - A DBZ-inspired browser game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "easystarjs": "^0.4.4",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "terser": "^5.46.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
