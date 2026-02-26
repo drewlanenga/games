@@ -9,8 +9,11 @@ import {
   INVINCIBILITY_DURATION,
   SPEED_BOOST_DURATION,
   SHIELD_DURATION,
-  SEARCH_RANGE,
   MAX_KEYS,
+  STARTING_AMMO,
+  MEATBALL_SPEED,
+  MEATBALL_COOLDOWN,
+  MEATBALL_LOOT_AMOUNT,
 } from '../constants';
 import { generateVillage } from '../map/VillageGenerator';
 import { COLLIDABLE_TILES, FLOOR_TILES } from '../map/TileRegistry';
@@ -19,11 +22,11 @@ import { Player } from '../entities/Player';
 import { SearchableObject } from '../entities/SearchableObject';
 import { ZombieSpawner } from '../systems/ZombieSpawner';
 import { Zombie } from '../entities/Zombie';
+import { TouchControlsScene } from './TouchControlsScene';
 
 export class GameScene extends Phaser.Scene {
   private player!: Player;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private spaceKey!: Phaser.Input.Keyboard.Key;
   private mapKey!: Phaser.Input.Keyboard.Key;
   private mapData!: MapData;
   private structureLayer!: Phaser.Tilemaps.TilemapLayer;
@@ -45,6 +48,17 @@ export class GameScene extends Phaser.Scene {
   private jailDot!: Phaser.GameObjects.Rectangle;
   private walkabilityGrid!: number[][];
   private floorTilePositions!: Set<string>;
+  private touchScene: TouchControlsScene | null = null;
+  private swipeActive = false;
+  private swipeStartX = 0;
+  private swipeStartY = 0;
+  private swipeDir: { x: number; y: number } = { x: 0, y: 0 };
+  private readonly SWIPE_THRESHOLD = 20;
+  private ammo = STARTING_AMMO;
+  private fireKey!: Phaser.Input.Keyboard.Key;
+  private projectiles!: Phaser.Physics.Arcade.Group;
+  private fireCooldown = 0;
+  private lastFacingAngle = 0;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -156,10 +170,36 @@ export class GameScene extends Phaser.Scene {
       this.onZombieContact();
     });
 
+    // Auto-search on walk-in
+    this.physics.add.overlap(this.player, this.searchableObjects, (_player, obj) => {
+      const searchable = obj as SearchableObject;
+      if (!searchable.isSearched) {
+        const loot = searchable.search();
+        this.playSfx('sfx-object-break');
+        this.applyLoot(loot, searchable.x, searchable.y);
+      }
+    });
+
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys();
-    this.spaceKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.mapKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+    this.fireKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+    // Projectile setup
+    this.ammo = STARTING_AMMO;
+    this.fireCooldown = 0;
+    this.projectiles = this.physics.add.group();
+
+    // Projectile-zombie overlap: destroy both on hit
+    this.physics.add.overlap(this.projectiles, this.zombies, (proj, zombie) => {
+      (proj as Phaser.Physics.Arcade.Sprite).destroy();
+      (zombie as Zombie).destroy();
+    });
+
+    // Projectile-wall collider: destroy projectile on wall hit
+    this.physics.add.collider(this.projectiles, this.structureLayer, (proj) => {
+      (proj as Phaser.Physics.Arcade.Sprite).destroy();
+    });
 
     // World and camera setup
     const worldW = MAP_WIDTH * TILE_SIZE;
@@ -208,33 +248,110 @@ export class GameScene extends Phaser.Scene {
       maxHp: MAX_HP,
       keys: this.keysCollected,
       maxKeys: MAX_KEYS,
+      ammo: this.ammo,
+    });
+
+    // Launch touch controls on touch-capable devices
+    if (this.sys.game.device.input.touch) {
+      this.scene.launch('TouchControlsScene');
+      this.touchScene = this.scene.get('TouchControlsScene') as TouchControlsScene;
+      this.touchScene.events.on('toggle-minimap', () => {
+        this.minimapVisible = !this.minimapVisible;
+        this.minimapCam.setAlpha(this.minimapVisible ? 0.85 : 0);
+      });
+      this.touchScene.events.on('fire', () => {
+        this.fireProjectile();
+      });
+    }
+
+    // Swipe input (works on right half of screen)
+    this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      if (ptr.x > this.scale.width / 2) {
+        this.swipeActive = true;
+        this.swipeStartX = ptr.x;
+        this.swipeStartY = ptr.y;
+        this.swipeDir = { x: 0, y: 0 };
+      }
+    });
+    this.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
+      if (!this.swipeActive || !ptr.isDown) return;
+      const dx = ptr.x - this.swipeStartX;
+      const dy = ptr.y - this.swipeStartY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > this.SWIPE_THRESHOLD) {
+        this.swipeDir = { x: dx / dist, y: dy / dist };
+      }
+    });
+    this.input.on('pointerup', () => {
+      this.swipeActive = false;
+      this.swipeDir = { x: 0, y: 0 };
     });
   }
 
   update(time: number, delta: number): void {
-    // Player movement
+    // Fire cooldown
+    if (this.fireCooldown > 0) {
+      this.fireCooldown -= delta;
+    }
+
+    // Fire key (Space)
+    if (Phaser.Input.Keyboard.JustDown(this.fireKey)) {
+      this.fireProjectile();
+    }
+
+    // Cleanup off-screen projectiles
+    const worldW = MAP_WIDTH * TILE_SIZE;
+    const worldH = MAP_HEIGHT * TILE_SIZE;
+    for (const proj of this.projectiles.getChildren() as Phaser.Physics.Arcade.Sprite[]) {
+      if (proj.x < -50 || proj.x > worldW + 50 || proj.y < -50 || proj.y > worldH + 50) {
+        proj.destroy();
+      }
+    }
+
+    // Player movement — merge keyboard, d-pad, and swipe inputs
     let vx = 0;
     let vy = 0;
     const speed = this.hasSpeedBoost ? PLAYER_BOOSTED_SPEED : PLAYER_SPEED;
 
+    // Keyboard input
     if (this.cursors.left.isDown) vx = -speed;
     else if (this.cursors.right.isDown) vx = speed;
     if (this.cursors.up.isDown) vy = -speed;
     else if (this.cursors.down.isDown) vy = speed;
 
+    // D-pad input (overrides keyboard if active)
+    if (this.touchScene) {
+      const dp = this.touchScene.dpadState;
+      if (dp.left || dp.right || dp.up || dp.down) {
+        vx = 0;
+        vy = 0;
+        if (dp.left) vx = -speed;
+        if (dp.right) vx = speed;
+        if (dp.up) vy = -speed;
+        if (dp.down) vy = speed;
+      }
+    }
+
+    // Swipe input (overrides d-pad if active)
+    if (this.swipeActive && (this.swipeDir.x !== 0 || this.swipeDir.y !== 0)) {
+      vx = this.swipeDir.x * speed;
+      vy = this.swipeDir.y * speed;
+    }
+
     // Normalize diagonal movement
     if (vx !== 0 && vy !== 0) {
-      vx *= 0.707;
-      vy *= 0.707;
+      const mag = Math.sqrt(vx * vx + vy * vy);
+      vx = (vx / mag) * speed;
+      vy = (vy / mag) * speed;
     }
 
     this.player.setVelocity(vx, vy);
 
     // Animations
-    if (vx < 0) this.player.play('player-walk-left', true);
-    else if (vx > 0) this.player.play('player-walk-right', true);
-    else if (vy < 0) this.player.play('player-walk-up', true);
-    else if (vy > 0) this.player.play('player-walk-down', true);
+    if (vx < 0) { this.player.play('player-walk-left', true); this.lastFacingAngle = Math.PI; }
+    else if (vx > 0) { this.player.play('player-walk-right', true); this.lastFacingAngle = 0; }
+    else if (vy < 0) { this.player.play('player-walk-up', true); this.lastFacingAngle = -Math.PI / 2; }
+    else if (vy > 0) { this.player.play('player-walk-down', true); this.lastFacingAngle = Math.PI / 2; }
     else {
       const anim = this.player.anims.currentAnim;
       if (anim) {
@@ -243,9 +360,15 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Search interaction
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
-      this.trySearch();
+    // Auto win check: walk near jail with all keys
+    if (this.keysCollected >= MAX_KEYS) {
+      const jailPx = this.mapData.jailDoor.x * TILE_SIZE + TILE_SIZE / 2;
+      const jailPy = this.mapData.jailDoor.y * TILE_SIZE + TILE_SIZE / 2;
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, jailPx, jailPy);
+      if (dist < TILE_SIZE * 2) {
+        this.gameWin();
+        return;
+      }
     }
 
     // Invincibility timer
@@ -280,44 +403,13 @@ export class GameScene extends Phaser.Scene {
     this.zombieSpawner.update(time, delta);
 
     const zombieArr = this.zombies.getChildren() as Zombie[];
+    const speedMultiplier = 1 + zombieArr.length * 0.02;
     for (const zombie of zombieArr) {
-      zombie.moveToward(this.player.x, this.player.y, this.floorTilePositions);
+      zombie.moveToward(this.player.x, this.player.y, this.floorTilePositions, speedMultiplier);
     }
 
     // Update minimap player dot
     this.playerDot.setPosition(this.player.x, this.player.y);
-  }
-
-  private trySearch(): void {
-    // Check if at jail door with all keys
-    if (this.keysCollected >= MAX_KEYS) {
-      const jailPx = this.mapData.jailDoor.x * TILE_SIZE + TILE_SIZE / 2;
-      const jailPy = this.mapData.jailDoor.y * TILE_SIZE + TILE_SIZE / 2;
-      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, jailPx, jailPy);
-      if (dist < SEARCH_RANGE * 2) {
-        this.gameWin();
-        return;
-      }
-    }
-
-    const objects = this.searchableObjects.getChildren() as SearchableObject[];
-    let closest: SearchableObject | null = null;
-    let closestDist = Infinity;
-
-    for (const obj of objects) {
-      if (obj.isSearched) continue;
-      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, obj.x, obj.y);
-      if (dist < SEARCH_RANGE && dist < closestDist) {
-        closest = obj;
-        closestDist = dist;
-      }
-    }
-
-    if (closest) {
-      const loot = closest.search();
-      this.playSfx('sfx-object-break');
-      this.applyLoot(loot, closest.x, closest.y);
-    }
   }
 
   private applyLoot(loot: LootType, x: number, y: number): void {
@@ -350,10 +442,54 @@ export class GameScene extends Phaser.Scene {
         this.shieldTimer = SHIELD_DURATION;
         this.showFloatingText(x, y, 'SHIELD!', '#ffdd00');
         break;
+      case LootType.MEATBALL:
+        this.ammo += MEATBALL_LOOT_AMOUNT;
+        this.scene.get('UIScene').events.emit('ammo-changed', this.ammo);
+        this.showFloatingText(x, y, `+${MEATBALL_LOOT_AMOUNT} AMMO`, '#8b4513');
+        break;
       case LootType.EMPTY:
         this.showFloatingText(x, y, 'Empty...', '#888888');
         break;
     }
+  }
+
+  private fireProjectile(): void {
+    if (this.ammo <= 0 || this.fireCooldown > 0) return;
+
+    this.ammo--;
+    this.fireCooldown = MEATBALL_COOLDOWN;
+    this.scene.get('UIScene').events.emit('ammo-changed', this.ammo);
+
+    // Find nearest zombie
+    const zombieArr = this.zombies.getChildren() as Zombie[];
+    let targetAngle = this.lastFacingAngle;
+
+    if (zombieArr.length > 0) {
+      let nearest: Zombie | null = null;
+      let nearestDist = Infinity;
+      for (const z of zombieArr) {
+        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, z.x, z.y);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = z;
+        }
+      }
+      if (nearest) {
+        targetAngle = Math.atan2(nearest.y - this.player.y, nearest.x - this.player.x);
+      }
+    }
+
+    // Create projectile sprite
+    const proj = this.physics.add.sprite(this.player.x, this.player.y, 'loot-meatball');
+    proj.setDepth(8);
+    this.projectiles.add(proj);
+
+    // Set velocity toward target
+    const velX = Math.cos(targetAngle) * MEATBALL_SPEED;
+    const velY = Math.sin(targetAngle) * MEATBALL_SPEED;
+    proj.setVelocity(velX, velY);
+
+    this.playSfx('sfx-fire');
   }
 
   private showFloatingText(x: number, y: number, text: string, color: string): void {
@@ -392,12 +528,14 @@ export class GameScene extends Phaser.Scene {
   private gameWin(): void {
     this.playSfx('sfx-win');
     this.scene.stop('UIScene');
+    this.scene.stop('TouchControlsScene');
     this.scene.start('GameOverScene', { won: true });
   }
 
   private gameLose(): void {
     this.playSfx('sfx-lose');
     this.scene.stop('UIScene');
+    this.scene.stop('TouchControlsScene');
     this.scene.start('GameOverScene', { won: false });
   }
 
@@ -413,6 +551,14 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.mapKey.off('down');
+    this.input.off('pointerdown');
+    this.input.off('pointermove');
+    this.input.off('pointerup');
+    if (this.touchScene) {
+      this.touchScene.events.off('toggle-minimap');
+      this.touchScene.events.off('fire');
+      this.touchScene = null;
+    }
     if (this.minimapCam) {
       this.cameras.remove(this.minimapCam);
     }

@@ -111,6 +111,10 @@ export class AudioManager {
       'sfx-zombie-groan': generateSlideTone(90, 70, 0.4, sr),
       'sfx-heart-loss': generateSlideTone(440, 220, 0.2, sr),
       'sfx-object-break': generateNoise(0.1, sr),
+      'sfx-fire': concatSamples(
+        generateTone(330, 0.05, sr, false),
+        generateNoise(0.08, sr),
+      ),
       'sfx-win': concatSamples(
         generateTone(523, 0.15, sr, false),
         generateTone(659, 0.15, sr, false),

@@ -495,6 +495,21 @@ export class SpriteGenerator {
     g.destroy();
   }
 
+  // ─── Meatball Projectile ───
+
+  static generateMeatball(scene: Phaser.Scene): void {
+    const g = gfx(scene);
+    g.fillStyle(0x8b4513);
+    g.fillCircle(5, 5, 5);
+    g.fillStyle(0xb5651d);
+    g.fillCircle(4, 3, 2);
+    g.fillStyle(0x5c2d0a);
+    g.fillRect(6, 6, 1, 1);
+    g.fillRect(3, 7, 1, 1);
+    g.generateTexture('loot-meatball', 10, 10);
+    g.destroy();
+  }
+
   // ─── Generate All ───
 
   static generateAll(scene: Phaser.Scene): void {
@@ -515,5 +530,6 @@ export class SpriteGenerator {
     this.generateObjects(scene);
     this.generateUIIcons(scene);
     this.generateLootIcons(scene);
+    this.generateMeatball(scene);
   }
 }

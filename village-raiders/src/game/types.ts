@@ -10,6 +10,7 @@ export enum LootType {
   HEART = 'heart',
   SPEED = 'speed',
   SHIELD = 'shield',
+  MEATBALL = 'meatball',
   EMPTY = 'empty',
 }
 

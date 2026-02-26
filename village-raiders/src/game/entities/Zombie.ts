@@ -15,7 +15,7 @@ export class Zombie extends Phaser.Physics.Arcade.Sprite {
     this.play('zombie-walk-down');
   }
 
-  moveToward(targetX: number, targetY: number, floorTiles: Set<string>): void {
+  moveToward(targetX: number, targetY: number, floorTiles: Set<string>, speedMultiplier = 1): void {
     const dx = targetX - this.x;
     const dy = targetY - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -29,7 +29,7 @@ export class Zombie extends Phaser.Physics.Arcade.Sprite {
     const tileX = Math.floor(this.x / TILE_SIZE);
     const tileY = Math.floor(this.y / TILE_SIZE);
     const isInBuilding = floorTiles.has(`${tileX},${tileY}`);
-    const speed = isInBuilding ? ZOMBIE_BUILDING_SPEED : ZOMBIE_SPEED;
+    const speed = (isInBuilding ? ZOMBIE_BUILDING_SPEED : ZOMBIE_SPEED) * speedMultiplier;
 
     const vx = (dx / dist) * speed;
     const vy = (dy / dist) * speed;

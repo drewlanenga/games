@@ -9,8 +9,8 @@ export const PLAYER_BOOSTED_SPEED = 240;
 export const ZOMBIE_SPEED = 80;
 export const ZOMBIE_BUILDING_SPEED = 40;
 
-export const MAX_HP = 10;
-export const MAX_KEYS = 10;
+export const MAX_HP = 3;
+export const MAX_KEYS = 3;
 export const TOTAL_SEARCHABLE_OBJECTS = 40;
 
 export const INVINCIBILITY_DURATION = 1500;
@@ -24,3 +24,8 @@ export const MAX_ZOMBIES = 50;
 
 export const PATHFINDING_UPDATE_INTERVAL = 750;
 export const SEARCH_RANGE = 24;
+
+export const STARTING_AMMO = 5;
+export const MEATBALL_SPEED = 300;
+export const MEATBALL_COOLDOWN = 300;
+export const MEATBALL_LOOT_AMOUNT = 5;

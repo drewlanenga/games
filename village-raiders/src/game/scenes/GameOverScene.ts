@@ -8,6 +8,7 @@ export class GameOverScene extends Phaser.Scene {
   create(data: { won: boolean }): void {
     const cx = this.scale.width / 2;
     const cy = this.scale.height / 2;
+    const isTouch = this.sys.game.device.input.touch;
 
     const title = data.won ? 'YOU WIN!' : 'GAME OVER';
     const color = data.won ? '#00ff00' : '#ff0000';
@@ -18,7 +19,8 @@ export class GameOverScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    const prompt = this.add.text(cx, cy + 40, 'Press SPACE to Restart', {
+    const promptText = isTouch ? 'Tap to Restart' : 'Press SPACE to Restart';
+    const prompt = this.add.text(cx, cy + 40, promptText, {
       fontSize: '20px',
       color: '#ffffff',
     }).setOrigin(0.5);
@@ -31,9 +33,15 @@ export class GameOverScene extends Phaser.Scene {
       repeat: -1,
     });
 
-    this.input.keyboard!.once('keydown-SPACE', () => {
+    const restart = () => {
       this.scene.stop('UIScene');
       this.scene.start('MenuScene');
-    });
+    };
+
+    // Keyboard: Space
+    this.input.keyboard!.once('keydown-SPACE', restart);
+
+    // Touch: tap anywhere
+    this.input.once('pointerup', restart);
   }
 }
